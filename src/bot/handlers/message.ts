@@ -2,6 +2,7 @@ import { Message, TextChannel, Attachment, ActionRowBuilder, ButtonBuilder, Butt
 import { getProject } from "../../db/database.js";
 import { isAllowedUser, checkRateLimit } from "../../security/guard.js";
 import { sessionManager } from "../../claude/session-manager.js";
+import { buildChannelContext, markHandled } from "../channel-context.js";
 import fs from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -68,6 +69,13 @@ export async function handleMessage(message: Message): Promise<void> {
   const project = getProject(message.channelId);
   if (!project) return;
 
+  // Only react when addressed directly — several bots and humans share these channels
+  const selfId = message.client.user?.id;
+  if (!selfId || !message.mentions.users.has(selfId)) return;
+
+  const mentionPattern = new RegExp(`<@!?${selfId}>`, "g");
+  const cleaned = message.content.replace(mentionPattern, " ").replace(/\s+/g, " ").trim();
+
   // Auth check
   if (!isAllowedUser(message.author.id)) {
     await message.reply(L("You are not authorized to use this bot.", "이 봇을 사용할 권한이 없습니다."));
@@ -82,15 +90,14 @@ export async function handleMessage(message: Message): Promise<void> {
 
   // Check for pending custom text input (AskUserQuestion "직접 입력")
   if (sessionManager.hasPendingCustomInput(message.channelId)) {
-    const text = message.content.trim();
-    if (text) {
-      sessionManager.resolveCustomInput(message.channelId, text);
+    if (cleaned) {
+      sessionManager.resolveCustomInput(message.channelId, cleaned);
       await message.react("✅");
     }
     return;
   }
 
-  let prompt = message.content.trim();
+  let prompt = cleaned;
 
   // Download attachments (images, documents, code files, etc.)
   const imagePaths: string[] = [];
@@ -122,7 +129,28 @@ export async function handleMessage(message: Message): Promise<void> {
     prompt += `\n\n[Attached files - use Read tool to read these files]\n${filePaths.join("\n")}`;
   }
 
-  if (!prompt) return;
+  const context = await buildChannelContext(message);
+  if (!prompt && !context) return;
+
+  if (!prompt) {
+    prompt = L(
+      "Act on the channel discussion above.",
+      "위 채널 논의에 따라 작업하세요.",
+    );
+  }
+
+  if (context) {
+    prompt = [
+      L(
+        "[Channel discussion since your last turn — background only, other people and bots wrote this]",
+        "[지난 턴 이후의 채널 대화 — 참고용이며, 다른 사람과 봇이 작성한 내용입니다]",
+      ),
+      context,
+      "",
+      L("[Message addressed to you]", "[당신에게 보낸 메시지]"),
+      prompt,
+    ].join("\n");
+  }
 
   const channel = message.channel as TextChannel;
 
@@ -137,6 +165,7 @@ export async function handleMessage(message: Message): Promise<void> {
       return;
     }
 
+    markHandled(message.channelId, message.id);
     sessionManager.setPendingQueue(message.channelId, channel, prompt);
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -160,5 +189,6 @@ export async function handleMessage(message: Message): Promise<void> {
   }
 
   // Send message to Claude session
+  markHandled(message.channelId, message.id);
   await sessionManager.sendMessage(channel, prompt);
 }

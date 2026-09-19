@@ -144,7 +144,10 @@ export async function handleButtonInteraction(
     sessionManager.enableCustomInput(requestId, interaction.channelId);
 
     await interaction.update({
-      content: L("✏️ Type your answer...", "✏️ 답변을 입력하세요..."),
+      content: L(
+        `✏️ Type your answer, mentioning <@${interaction.client.user.id}>...`,
+        `✏️ <@${interaction.client.user.id}> 을(를) 멘션하여 답변을 입력하세요...`,
+      ),
       embeds: [],
       components: [],
     });
