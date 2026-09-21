@@ -362,7 +362,6 @@ class SessionManager {
               // Send result embed
               const resultText = resultMsg.result ?? L("Task completed", "작업 완료");
               const resultEmbed = createResultEmbed(
-                resultText,
                 resultMsg.total_cost_usd ?? 0,
                 resultMsg.duration_ms ?? 0,
                 getConfig().SHOW_COST,

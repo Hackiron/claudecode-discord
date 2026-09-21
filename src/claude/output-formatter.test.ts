@@ -183,7 +183,7 @@ describe("createToolApprovalEmbed", () => {
 
 describe("createResultEmbed", () => {
   it("shows cost in footer when showCost is true", () => {
-    const embed = createResultEmbed("Done", 0.0123, 5000, true);
+    const embed = createResultEmbed(0.0123, 5000, true);
     const footer = embed.data.footer?.text ?? "";
     expect(footer).toContain("Cost");
     expect(footer).toContain("$0.0123");
@@ -192,21 +192,21 @@ describe("createResultEmbed", () => {
   });
 
   it("hides cost in footer when showCost is false", () => {
-    const embed = createResultEmbed("Done", 0.0123, 5000, false);
+    const embed = createResultEmbed(0.0123, 5000, false);
     const footer = embed.data.footer?.text ?? "";
     expect(footer).not.toContain("Cost");
     expect(footer).toContain("Duration : 5.0s");
   });
 
   it("formats duration correctly", () => {
-    const embed = createResultEmbed("Done", 0, 12500, true);
+    const embed = createResultEmbed(0, 12500, true);
     const footer = embed.data.footer?.text ?? "";
     expect(footer).toContain("12.5s");
   });
 
-  it("truncates very long result text to 4000 chars", () => {
-    const embed = createResultEmbed("x".repeat(5000), 0, 0);
-    expect(embed.data.description!.length).toBeLessThanOrEqual(4000);
+  it("has no description, since the full response is already sent as plain messages", () => {
+    const embed = createResultEmbed(0, 0);
+    expect(embed.data.description).toBeUndefined();
   });
 });
 
