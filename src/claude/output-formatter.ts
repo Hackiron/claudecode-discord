@@ -250,7 +250,6 @@ export function createAskUserQuestionEmbed(
 }
 
 export function createResultEmbed(
-  result: string,
   costUsd: number,
   durationMs: number,
   showCost: boolean = true,
@@ -260,9 +259,12 @@ export function createResultEmbed(
     ? `${L("Cost (est.)", "비용 (추정)")} : $${costUsd.toFixed(4)}  |  ${L("Duration", "소요 시간")} : ${duration}`
     : `${L("Duration", "소요 시간")} : ${duration}`;
 
+  // No description here: the full response text is already sent as plain
+  // messages (split via splitMessage) before this embed is posted. Duplicating
+  // it here required truncating at 4000 chars, which made long answers look
+  // cut off even though the full text had already arrived above.
   const embed = new EmbedBuilder()
     .setTitle(L("✅ Task Complete", "✅ 작업 완료"))
-    .setDescription(result.slice(0, 4000))
     .setColor(0x00ff00)
     .setFooter({ text: footer })
     .setTimestamp();
