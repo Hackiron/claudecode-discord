@@ -297,8 +297,8 @@ class SessionManager {
             }
 
             // Handle streaming text
-            if (message.type === "assistant" && "content" in message) {
-              const content = message.content;
+            if (message.type === "assistant") {
+              const content = message.message?.content;
               if (Array.isArray(content)) {
                 for (const block of content) {
                   if ("text" in block && typeof block.text === "string") {
