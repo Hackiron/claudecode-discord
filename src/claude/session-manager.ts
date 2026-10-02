@@ -1,4 +1,4 @@
-import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { TextChannel } from "discord.js";
@@ -106,8 +106,28 @@ class SessionManager {
       }
     }, 15_000);
 
+    // Streaming input keeps the CLI's stdin open after the first result. With a plain
+    // string prompt the SDK closes stdin at that point, so a background subagent that
+    // outlives the turn fails every permission request with "Stream closed".
+    let endInput: () => void = () => {};
+    const inputDone = new Promise<void>((resolve) => { endInput = resolve; });
+    async function* promptStream(text: string): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: "user",
+        message: { role: "user", content: text },
+        parent_tool_use_id: null,
+      };
+      await inputDone;
+    }
+
+    // Background work (subagents, long Bash) that may still be running after a result.
+    let bgTaskCount = 0;
+    let awaitingNewTurn = false;
+    let idleTimer: NodeJS.Timeout | null = null;
+    const BG_GRACE_MS = 45_000; // wait for the follow-up turn after the last task ends
+
     const runQuery = (useResume: boolean) => query({
-      prompt,
+      prompt: promptStream(prompt),
       options: {
         cwd: project.project_path,
         permissionMode: "default",
@@ -296,8 +316,24 @@ class SessionManager {
               }
             }
 
+            // Track background tasks so the turn stays open until they finish
+            if (message.type === "system" && "subtype" in message && message.subtype === "background_tasks_changed") {
+              const tasks = (message as { tasks?: { ambient?: boolean }[] }).tasks ?? [];
+              bgTaskCount = tasks.filter((t) => !t.ambient).length;
+              if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+              if (bgTaskCount === 0 && hasResult) {
+                // Last task ended after the result; its notification should trigger one more turn.
+                idleTimer = setTimeout(endInput, BG_GRACE_MS);
+              }
+            }
+
             // Handle streaming text
             if (message.type === "assistant") {
+              if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+              if (awaitingNewTurn) {
+                awaitingNewTurn = false;
+                currentMessage = await channel.send(L("⏳ Background task finished, continuing...", "⏳ 백그라운드 작업 완료, 계속 진행합니다..."));
+              }
               const content = message.message?.content;
               if (Array.isArray(content)) {
                 for (const block of content) {
@@ -378,8 +414,19 @@ class SessionManager {
                 ));
               }
 
-              updateSessionStatus(channelId, "idle");
+              responseBuffer = "";
+              lastEditTime = 0;
               hasResult = true;
+              if (bgTaskCount === 0) {
+                updateSessionStatus(channelId, "idle");
+                endInput();
+              } else {
+                awaitingNewTurn = true;
+                await channel.send(L(
+                  `⏳ ${bgTaskCount} background task(s) still running — I'll post the follow-up here when they finish.`,
+                  `⏳ 백그라운드 작업 ${bgTaskCount}개가 실행 중입니다. 완료되면 이어서 알려드립니다.`,
+                ));
+              }
             }
           }
           break;
@@ -448,6 +495,8 @@ class SessionManager {
       updateSessionStatus(channelId, "offline");
     } finally {
       clearInterval(heartbeatInterval);
+      if (idleTimer) clearTimeout(idleTimer);
+      endInput();
       this.sessions.delete(channelId);
 
       // Clean up any pending approvals/questions for this channel
